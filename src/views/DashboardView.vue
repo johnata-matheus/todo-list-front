@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, h, ref, watch } from 'vue'
+import { z } from 'zod'
 import DataTable from '@/components/DataTable.vue'
 import TitleBar from '@/components/TitleBar.vue'
 import Input from '@/components/ui/input/Input.vue'
@@ -33,11 +34,13 @@ const { data: tasks, isLoading } = useTasks()
 const { mutate: createTask, isPending } = useCreateTask()
 const { toast } = useToast()
 
-const safeTasks = computed(() => tasks.value ?? [])
-
-const totalTasks = computed(() => tasks.value?.length ?? 0)
-
-const isDialogOpen = ref(false)
+const taskSchema = z.object({
+  title: z.string().min(3, 'O título deve ter pelo menos 3 caracteres.'),
+  description: z.string().min(5, 'A descrição deve ter pelo menos 5 caracteres.'),
+  status: z.enum(['pending', 'in_progress', 'completed'], {
+    errorMap: () => ({ message: 'Selecione um status válido.' }),
+  }),
+})
 
 const newTask = ref<Partial<ITask>>({
   title: '',
@@ -45,7 +48,32 @@ const newTask = ref<Partial<ITask>>({
   status: 'pending',
 })
 
+const isFormValid = computed(() => {
+  const result = taskSchema.safeParse(newTask.value);
+  return  result.success; 
+})
+
+const touchedFields = ref<Record<string, boolean>>({})
+
+const errors = computed(() => {
+  const result = taskSchema.safeParse(newTask.value);
+  if (result.success) return {}
+
+  const allErrors = Object.fromEntries(
+    Object.entries(result.error.flatten().fieldErrors).map(([key, value]) => [
+      key,
+      value?.[0] || '',
+    ]),
+  );
+
+  return Object.fromEntries(Object.entries(allErrors).filter(([key]) => touchedFields.value[key]))
+})
+
 const handleCreateTask = () => {
+  touchedFields.value = { title: true, description: true, status: true }
+
+  if (!isFormValid.value) return;
+
   createTask(newTask.value as ITask, {
     onSuccess: () => {
       closeDialog()
@@ -73,18 +101,29 @@ const handleCreateTask = () => {
   })
 }
 
+const safeTasks = computed(() => tasks.value ?? [])
+const totalTasks = computed(() => tasks.value?.length ?? 0)
+
 const defaultTask: Partial<ITask> = {
   title: '',
   description: '',
   status: 'pending',
 }
 
+const isDialogOpen = ref(false)
 const openDialog = () => {
   isDialogOpen.value = true
 }
 const closeDialog = () => {
   isDialogOpen.value = false
 }
+
+watch(isDialogOpen, (isOpen) => {
+  if (!isOpen) {
+    newTask.value = { ...defaultTask }
+    touchedFields.value = {}
+  }
+})
 
 const columns: ColumnDef<ITask>[] = [
   {
@@ -129,12 +168,6 @@ const columns: ColumnDef<ITask>[] = [
     },
   },
 ]
-
-watch(isDialogOpen, (isOpen) => {
-  if (!isOpen) {
-    newTask.value = { ...defaultTask }
-  }
-})
 </script>
 
 <template>
@@ -171,15 +204,31 @@ watch(isDialogOpen, (isOpen) => {
         <div class="grid gap-4">
           <div>
             <Label for="title"> Título </Label>
-            <Input id="title" v-model="newTask.title" />
+            <Input
+              id="title"
+              v-model="newTask.title"
+              class="mb-1"
+              @blur="touchedFields.title = true"
+            />
+            <span v-if="errors.title" class="text-red-500 text-sm">{{
+              errors.title
+            }}</span>
           </div>
           <div>
             <Label for="description"> Descrição </Label>
-            <Input id="description" v-model="newTask.description" />
+            <Input
+              id="description"
+              v-model="newTask.description"
+              class="mb-1"
+              @blur="touchedFields.description = true"
+            />
+            <span v-if="errors.description" class="text-red-500 text-sm">{{
+              errors.description
+            }}</span>
           </div>
           <div>
             <Label for="status"> Status </Label>
-            <Select v-model="newTask.status">
+            <Select v-model="newTask.status" class="mb-1" @blur="touchedFields.status = true">
               <SelectTrigger>
                 <SelectValue placeholder="Selecione o status" />
               </SelectTrigger>
@@ -191,6 +240,9 @@ watch(isDialogOpen, (isOpen) => {
                 </SelectGroup>
               </SelectContent>
             </Select>
+            <span v-if="errors.status" class="text-red-500 text-sm">{{
+              errors.status
+            }}</span>
           </div>
         </div>
         <DialogFooter>
